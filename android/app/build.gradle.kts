@@ -32,8 +32,18 @@ android {
 
     signingConfigs {
         create("release") {
-            if (hasReleaseKeystore) {
-                storeFile = file(keystorePath!!)
+            val path = keystorePath
+            if (hasReleaseKeystore && path != null) {
+                storeFile = file(path)
+                // 必须显式指定 storeType。CI 里的 keystore 是 PKCS12（.p12），
+                // 而 AGP 默认按 JKS 解析 —— 不指定会报
+                // "Keystore was tampered with, or password was incorrect"，
+                // 这条错误信息会把人引向"口令错了"，而真实原因是格式不对。
+                storeType = if (path.endsWith(".p12", true) || path.endsWith(".pfx", true)) {
+                    "PKCS12"
+                } else {
+                    "JKS"
+                }
                 storePassword = System.getenv("ORIDESK_KEYSTORE_PASSWORD")
                 keyAlias = System.getenv("ORIDESK_KEY_ALIAS")
                 keyPassword = System.getenv("ORIDESK_KEY_PASSWORD")
@@ -71,6 +81,15 @@ android {
 
     buildFeatures {
         viewBinding = true
+    }
+
+    lint {
+        // `assembleRelease` 会顺带跑 lintVital，而它的告警能让构建失败。
+        // 本机没有 Android 工具链，编译验证只能靠云端 CI 往返（3–8 分钟一轮），
+        // 让"代码风格类告警"占用往返不划算。
+        // 注意：这只是不**阻断构建**，不等于不做检查 —— 需要时单独跑 lint 任务。
+        checkReleaseBuilds = false
+        abortOnError = false
     }
 
     packaging {

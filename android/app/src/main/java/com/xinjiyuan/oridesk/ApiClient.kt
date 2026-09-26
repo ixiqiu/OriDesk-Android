@@ -152,7 +152,7 @@ class ApiClient(private val server: String) {
 
     private fun readBody(conn: HttpURLConnection, status: Int): String {
         val stream = if (status in 200..299) conn.inputStream else conn.errorStream
-        return stream?.bufferedReader()?.use(BufferedReader::readText).orEmpty()
+        return stream?.bufferedReader()?.use { it.readText() }.orEmpty()
     }
 
     private fun cookieHeader(url: String): String? =

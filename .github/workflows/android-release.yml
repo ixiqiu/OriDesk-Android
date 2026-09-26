@@ -50,12 +50,24 @@ jobs:
             echo "signed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          printf '%s' "${KEYSTORE_BASE64}" | base64 --decode > "${RUNNER_TEMP}/oridesk-release.jks"
-          echo "ORIDESK_KEYSTORE_PATH=${RUNNER_TEMP}/oridesk-release.jks" >> "$GITHUB_ENV"
+          printf '%s' "${KEYSTORE_BASE64}" | base64 --decode > "${RUNNER_TEMP}/oridesk-release.p12"
+          echo "ORIDESK_KEYSTORE_PATH=${RUNNER_TEMP}/oridesk-release.p12" >> "$GITHUB_ENV"
           echo "ORIDESK_KEYSTORE_PASSWORD=${KEYSTORE_PASSWORD}" >> "$GITHUB_ENV"
           echo "ORIDESK_KEY_ALIAS=${KEY_ALIAS}" >> "$GITHUB_ENV"
           echo "ORIDESK_KEY_PASSWORD=${KEY_PASSWORD}" >> "$GITHUB_ENV"
           echo "signed=true" >> "$GITHUB_OUTPUT"
+
+      # 见 android.yml 里的同名步骤：只输出别名与指纹，绝不输出密钥。
+      - name: 校验签名密钥
+        if: steps.keystore.outputs.signed == 'true'
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+        run: |
+          keytool -list -keystore "${ORIDESK_KEYSTORE_PATH}" \
+            -storetype PKCS12 \
+            -storepass "${KEYSTORE_PASSWORD}" \
+            -alias "${KEY_ALIAS}"
 
       # 从 tag 推出 Android 的 versionCode / versionName。
       # versionCode 必须是**单调递增的整数**，否则新 APK 装不上旧版本之上。
