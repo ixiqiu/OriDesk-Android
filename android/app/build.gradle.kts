@@ -105,7 +105,8 @@ dependencies {
     // 因此以下都**不用第三方库**：
     //   HTTP  -> framework 的 HttpURLConnection（不用 OkHttp）
     //   JSON  -> framework 的 org.json（不用 Gson/Moshi）
-    //   并发  -> Thread + Handler（不用 kotlinx-coroutines）
+    //   并发  -> Thread + Handler（不直接依赖 kotlinx-coroutines；它会被
+    //            androidx.lifecycle 间接带进来，但本工程不使用它的 API）
     //   加密  -> Android Keystore + AES/GCM（不用已废弃的 security-crypto，见 SecureStore.kt）
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.appcompat:appcompat:1.7.0")

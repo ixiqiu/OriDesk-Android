@@ -621,6 +621,45 @@ topic、再建一条记录，而 App 只知道自己拿到的最后一条 ——
 `CSRF_FAILURE_VIEW`**（不是 urls）挂上；只对 `/api/` 前缀返回 JSON，
 Web 页面仍渲染 `403.html`，不改变既有行为。
 
+### 10.6 前台服务类型用 `specialUse`，不是 `dataSync`
+
+**实现期发现的新事实**：Android 15（targetSdk 35）对 `dataSync` 类型的前台服务
+施加了「**每 24 小时累计 6 小时**」的上限，到点系统调用 `Service.onTimeout()`，
+应用必须自行停止服务。
+
+对一个要 7×24 维持 ntfy 长连接的应用，这等于每天必然有一段时间静默失联，
+而且故障现象是"过一阵就收不到推送了"，极难排查。
+`specialUse` 不设时限，且本应用直发 APK、不上架，无需向应用商店说明用途。
+
+（附带收益：Android 15 限制从 `BOOT_COMPLETED` 启动的前台服务类型清单里
+包含 `dataSync` 但不含 `specialUse`，所以开机自启这条路径也保住了。）
+
+### 10.7 CI 拆成两个 workflow，而不是一个
+
+`04-CICD与验证边界.md` §3 原计划一个 `android.yml`（`paths: android/**` 过滤，
+打 tag 时出 Release）。实现时改成两个文件：
+
+- `.github/workflows/android.yml`：push/PR，带 `paths` 过滤，产出两档 APK artifact
+- `.github/workflows/android-release.yml`：只由 `v*` tag 触发，发布签名 Release APK
+
+**原因**：`paths` 与 `tags` 同处一个 push 触发器时，路径过滤对 tag 推送是否生效，
+在 GitHub 官方文档里没有直白说明（我查了 workflow-syntax 文档没有找到明确表述）。
+赌错的后果是「打了 tag 却不发 Release」这种**静默失效**——不符合本项目
+「失败要响」的既有取向。拆开后两边触发条件都无歧义。
+
+### 10.8 App 需要自己持有 ntfy **订阅用**令牌
+
+**实现期发现的缺口**：方案 B 下 App 要自己去 ntfy 订阅，而契约 §3.2 明确规定
+API **绝不返回 ntfy token**（那是实例级发布凭据）。那 App 拿什么通过 ntfy 的鉴权？
+
+契约 §4.3 原话是「topic / token 存 `EncryptedSharedPreferences`」——它已经预期
+App 侧持有一个令牌，只是没说令牌从哪来。**实现**：设置页提供一个可选的
+「ntfy 访问令牌」输入框，由用户填一次，密文存储。
+
+部署时由此得出一条要求：**ntfy 实例若开了鉴权，管理员需要用 `ntfy token add`
+额外签发一个订阅用令牌给手机**，不能把后端发布用的那把发给所有人
+（ntfy 的访问令牌会授予该用户的**完整**账号权限，见其官方文档）。
+
 ---
 
 ## 附录 A：本契约与既有文档的关系
