@@ -19,6 +19,9 @@ android/.kotlin/
 *.iml
 *.apk
 *.aab
+# apksigner 生成的 v4 签名附属文件：不是 APK 本身，也不含私钥，
+# 但同样不该入库（曾经因为只挡了 *.apk 而漏进来过）
+*.idsig
 
 # 杂项
 __pycache__/
