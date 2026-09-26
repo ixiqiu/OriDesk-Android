@@ -43,6 +43,8 @@ class MainActivity : AppCompatActivity() {
         setContentView(binding.root)
 
         prefs = Prefs(this)
+        // Android 15 强制 edge-to-edge，不处理的话网页顶栏会被状态栏压住（见 UiInsets）。
+        UiInsets.apply(this, binding.root)
         setupWebView()
         setupBackHandling()
 

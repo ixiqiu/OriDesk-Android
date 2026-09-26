@@ -27,6 +27,8 @@ class SettingsActivity : AppCompatActivity() {
         binding = ActivitySettingsBinding.inflate(layoutInflater)
         setContentView(binding.root)
         prefs = Prefs(this)
+        // 同 MainActivity：edge-to-edge 下不加 insets 会让顶部内容被状态栏盖住。
+        UiInsets.apply(this, binding.root)
 
         binding.serverInput.setText(prefs.serverUrl)
         binding.deviceLabelInput.setText(prefs.deviceLabel.ifEmpty { defaultDeviceLabel() })
