@@ -1,6 +1,6 @@
 # 移动端 API 约定（App ↔ OriDesk 后端契约）
 
-> 状态：**草案 v1.1，D1 已决（方案 B），其余 D2–D11 待人工审**（阶段 0 产物）
+> 状态：**已冻结 v1.0**（2026-09-26 人工确认 D1–D11 全部采纳）
 > 冻结对象：端点路径、请求/响应结构、鉴权与错误语义、ntfy 载荷、新增模型与设置项。
 > 冻结之后，阶段 1（后端 `apps/notifications/`）、阶段 2（角标/订阅端点）、阶段 3（安卓工程）
 > 三边同时以此为准；任何一方要改，先改本文档并重新过审。
@@ -9,7 +9,7 @@
 
 - **§1–§4 是契约正文**，实现方（后端 / App）逐条对齐。
 - **§6 列出新增数据模型与设置项**，按开发文档 §10.4 属于「需人工确认」范围。
-- **§9 是待确认项汇总表（D1–D11）**。审阅时请**只盯这张表和每个决策点上的【待确认 Dx】标记**，
+- **§9 是决策汇总表（D1–D11，全部已决）**。正文中每个决策点上的【已决 Dx】标记指向该表。
   其余部分是可直接执行的事实与推理，不需要逐字审。
 
 本文所有「代码事实」均于 2026-09-26 在 `/data/dsh/home/OriDesk` 源码上核对过，标注了出处。
@@ -45,7 +45,7 @@ App 的 WebView 直接复用网页，因此：
 **放在 `path("", include("apps.tickets.urls"))` 之前**，避免将来 tickets 新增通配路由时被抢先匹配。
 `apps/notifications/urls.py` 自带 `app_name = "notifications"`。
 
-【待确认 D7】路径前缀 `/api/mobile/`（备选：`/api/v1/mobile/`、`/mobile/api/`）。
+**【已决 D7】**路径前缀 `/api/mobile/`（备选 `/api/v1/mobile/`、`/mobile/api/` 未采用）。
 
 ### 1.3 为什么带 `/mobile` 而不是通用 `/api/v1/`
 
@@ -102,8 +102,8 @@ App 的 WebView 直接复用网页，因此：
 - 已登录但无权访问该对象 → **`404`**（沿用可见性不变量，见 §2.4）
 - 已登录但方法不允许 → **`405`**
 
-【待确认 D8】`api_login_required` 放在 `apps/core/permissions.py`（与既有装饰器同处，推荐）
-还是 `apps/notifications/decorators.py`（改动面更小）。
+**【已决 D8】**`api_login_required` 放在 `apps/core/permissions.py`（与既有装饰器同处），
+不放 `apps/notifications/decorators.py`。
 
 ### 2.3 CSRF：保留，用 `X-CSRFToken` 头
 
@@ -125,8 +125,8 @@ App 的 WebView 直接复用网页，因此：
 **若 `csrftoken` 读不到**（例如用户从未打开过带表单的页面，且 E1 尚未调用过）：
 App 必须先成功调用一次 E1 再重试；失败则提示「请重新打开并登录」。
 
-【待确认 D9】是否接受「用 `@ensure_csrf_cookie` 让 E1 顺带下发 CSRF cookie」这一设计
-（备选：加一个 `GET /api/mobile/csrf/` 专门下发）。
+**【已决 D9】**采用「用 `@ensure_csrf_cookie` 让 E1 顺带下发 CSRF cookie」这一设计，
+**不新增** `GET /api/mobile/csrf/` 端点。
 
 ### 2.4 可见性与权限不变量（照抄既有语义，不得放宽）
 
@@ -169,7 +169,7 @@ App 必须先成功调用一次 E1 再重试；失败则提示「请重新打开
 | 405 | `method_not_allowed` | 方法不对 | 编程错误，上报 |
 | 500 | `server_error` | 服务端异常 | 提示，指数退避重试 |
 
-【待确认 D10】错误码表的完整度是否够用（后续发现缺码是**加**不是**改**，不破坏兼容）。
+**【已决 D10】**错误码表以此为准。后续发现缺码是**加**不是**改**，不破坏兼容。
 
 ### 3.1 E1 `GET /api/mobile/badge/`
 
@@ -188,7 +188,7 @@ App 必须先成功调用一次 E1 再重试；失败则提示「请重新打开
 「口径必须与 `inbox()` 里各 scope 的过滤条件**逐字一致**，否则会出现
 "chip 显示 3 条、点进去只有 2 条"这种自相矛盾的界面」。
 
-**【待确认 D5（推荐采纳）】**：把该函数**逐字搬到** `apps/tickets/selectors.py::scope_counts(user)`，
+**【已决 D5】**：把该函数**逐字搬到** `apps/tickets/selectors.py::scope_counts(user)`，
 `views._scope_counts` 改为调用 `selectors.scope_counts`（一行转发，行为不变）。
 角标端点调用 `selectors.scope_counts`。
 **理由**：绝不复制第二套口径——那正是既有代码用注释警告过的 bug。搬移是纯重构，
@@ -249,7 +249,8 @@ App 必须先成功调用一次 E1 再重试；失败则提示「请重新打开
 **幂等键**：`(user, topic)`。App 重试/重装后重复调用不会产生多条记录。
 App **应把返回的 `topic`/`server`/`id` 持久化**，重启后不重复注册。
 
-【待确认 D2】`Subscription` 新模型本身（字段见 §6.1）——开发文档 §10.4 要求人工确认。
+**【已决 D2】**`Subscription` 新模型经人工确认（字段见 **§5.1**）——开发文档 §10.4
+「新增模型需人工确认」这道门已过。
 
 ### 3.4 E4 `PATCH /api/mobile/subscriptions/<id>/`
 
@@ -270,7 +271,7 @@ App **应把返回的 `topic`/`server`/`id` 持久化**，重启后不重复注�
   已经躺在 ntfy 缓存里的旧消息无法撤回，这一点必须写进用户文档。
 - `user` 被删除时 `Subscription` 随 `on_delete=CASCADE` 一并消失。
 
-【待确认 D11】「吊销后旧消息仍在 ntfy 缓存中」是否可接受（缓解：见 §4.3 改 topic 即换频道）。
+**【已决 D11】**接受「吊销后旧消息仍在 ntfy 缓存中」。缓解手段：见 §4.3，改 topic 即换频道。
 
 ### 3.6 E6 `POST /api/mobile/subscriptions/<id>/test/`
 
@@ -282,7 +283,7 @@ App **应把返回的 `topic`/`server`/`id` 持久化**，重启后不重复注�
 有了这个端点，「打通链路」从手工 curl 变成 App 里一个按钮，**把「推送不通」与
 「App 有问题」彻底分开**。测试推送**不写 `NotificationLog`**（避免污染真实统计）。
 
-【待确认 D6】是否加这个端点（它严格说超出「角标 + 订阅」的字面范围，但用途明确）。
+**【已决 D6】**加这个端点。它严格说超出「角标 + 订阅」的字面范围，但用途明确（见上）。
 
 ---
 
@@ -309,7 +310,7 @@ Content-Type: text/plain; charset=utf-8
   推送失败绝不能影响收信流水线（`02` §2.1 的防御风格）。
 - `Title`/`Tags`/`Click` 承载中文时，ntfy 文档提示部分库对 UTF-8 header 支持不佳，
   可用 RFC 2047 编码。**App/后端联调时必须实测中文标题**，见 §8。
-- 【待确认 D3】`Click` 需要**绝对 URL**（见 §4.5），因此要新增一个外部地址设置项。
+- **【已决 D3】**`Click` 需要**绝对 URL**（见 §4.5），因此新增设置项 `mobile_public_base_url`。
 
 ### 4.2 订阅（App ← ntfy）—— **已决：方案 B（App 自己收）**
 
@@ -415,10 +416,11 @@ ntfy 提供三种订阅方式（已核 `docs.ntfy.sh/subscribe/api/`）：
 - 为什么需要它：`Click` 必须是绝对 URL；而本仓库**公开**，
   决策 10 要求**不硬编码服务器地址**，所以只能走设置项。
 - 该设置为空时：**省略 `Click` 头**，通知只作提示，点开进 App 首页。不报错。
-- App 侧：方案 B 下 `Click` 由**我们自己**处理，因此可以做得比 A 更好——
-  注册自定义 scheme（如 `oridesk://ticket/123`）可直接唤起 App 并跳进 WebView 到该工单，
-  不必绕浏览器。【待确认 D3】是否要加这个 scheme（不加则 `Click` 给 `https://`，
-  由系统浏览器打开，用户需再登录一次或依赖 WebView 已存的会话）。
+- App 侧（**【已决 D3】**）：方案 B 下 `Click` 由**我们自己**处理，所以**注册自定义 scheme**，
+  优先用 `oridesk://ticket/{id}` 直接唤起 App 并跳进 WebView 到该工单，**不绕浏览器**
+  （绕浏览器会让用户再登录一次，或依赖浏览器里另一套会话）。
+  `mobile_public_base_url` 仍必须配：`Click` 头需要一个合法绝对 URL 作为兜底，
+  且 scheme 唤起失败时系统会退回到它。
 
 ---
 
@@ -471,7 +473,7 @@ ntfy 提供三种订阅方式（已核 `docs.ntfy.sh/subscribe/api/`）：
 
 ### 6.2 ntfy token 的存储位置
 
-【待确认 D4】**建议存 Fernet 密文，不放 `Setting.value` 明文。**
+**【已决 D4】存 Fernet 密文，不放 `Setting.value` 明文。**
 
 - `03-通知与推送设计.md` §5 原话是「配置项进 `Setting.DEFAULTS`：ntfy server URL /
   可选 token / 是否启用 / 聚合窗口秒数」。按字面实现，token 会**明文落库**。
@@ -534,28 +536,33 @@ App 侧必须在用户填地址时即拒绝 `http://`（仅允许 `https://` 或
 
 ---
 
-## 9. 待确认项汇总（**审阅请只盯这张表**）
+## 9. 决策汇总（D1–D11，**全部已决**）
 
-| # | 待确认 | 我的倾向 | 影响 |
+> 2026-09-26 人工确认。**D1–D11 均已采纳**，契约据此冻结（v1.0）。
+> 本表是溯源记录：正文中任何【已决 Dx】标记都可回到这里看当时的取舍。
+
+| # | 决策 | 决议 | 影响 / 备注 |
 |---|---|---|---|
-| **D1** | ~~推送接收方：A 官方 ntfy App / B App 自己收~~ | ✅ **已决：方案 B**（§4.2） | 2026-09-26 人工确认。ntfy 保留；前台服务重新用作离线通道，翻案依据见 §4.2.2 |
-| D2 | 新增 `Subscription` 模型（§6.1 字段表） | 采纳 | 开发文档 §10.4 要求人工确认 |
-| D3 | `Click` 用绝对 URL + 新增 `mobile_public_base_url`；是否加 `oridesk://` scheme | 加设置项；scheme 先不加 | 不加设置项则通知无法直达工单页 |
-| D4 | ntfy token 存 Fernet 密文而非 `Setting` 明文 | **存密文** | 与 `03` §5 字面表述有出入，需你确认偏离 |
-| D5 | 把 `_scope_counts` 上移为 `selectors.scope_counts` 供角标复用 | 采纳 | 避免第二套计数口径（既有代码注释警告过的 bug） |
-| D6 | 是否加 E6「测试推送」端点 | 加 | 超出「角标+订阅」字面范围；但直接服务 `03` §7 的验证顺序 |
-| D7 | 路径前缀 `/api/mobile/` | 采纳 | 改名成本低，尽早定 |
-| D8 | `api_login_required` 放 `core/permissions.py` 还是 `notifications/` | 放 core | 与既有权限装饰器同处 |
-| D9 | E1 用 `@ensure_csrf_cookie` 顺带下发 CSRF cookie | 采纳 | 省一个端点 |
-| D10 | 错误码表是否够用 | 够用 | 后续只加不改 |
-| D11 | 吊销订阅后 ntfy 缓存中的旧消息不可撤回，是否可接受 | 可接受 | 缓解：吊销后再注册会换新 topic |
+| **D1** | 推送接收方：A 官方 ntfy App / B App 自己收 | ✅ **方案 B**（§4.2） | ntfy 保留；前台服务重新用作离线通道，翻案依据见 §4.2.2 |
+| D2 | 新增 `Subscription` 模型（§5.1 字段表） | ✅ 采纳 | 开发文档 §10.4「新增模型需人工确认」已过 |
+| D3 | `Click` 绝对 URL + `mobile_public_base_url`；`oridesk://` scheme | ✅ 都加 | 不加设置项则通知无法直达工单页；scheme 直接唤起 App，不绕浏览器 |
+| D4 | ntfy token 存 Fernet 密文而非 `Setting` 明文 | ✅ **存密文** | ⚠️ 与 `03` §5 字面表述有意偏离，理由见 §6.2 |
+| D5 | 把 `_scope_counts` 上移为 `selectors.scope_counts` 供角标复用 | ✅ 采纳 | 避免第二套计数口径（既有代码注释警告过的 bug） |
+| D6 | 加 E6「测试推送」端点 | ✅ 加 | 超出「角标+订阅」字面范围；但直接服务 `03` §7 的验证顺序 |
+| D7 | 路径前缀 `/api/mobile/` | ✅ 采纳 | 改名成本低，尽早定 |
+| D8 | `api_login_required` 放 `core/permissions.py` | ✅ 放 core | 与既有权限装饰器同处 |
+| D9 | E1 用 `@ensure_csrf_cookie` 顺带下发 CSRF cookie | ✅ 采纳 | 省一个端点 |
+| D10 | 错误码表够用 | ✅ 够用 | 后续只加不改 |
+| D11 | 吊销订阅后 ntfy 缓存中的旧消息不可撤回 | ✅ 接受 | 缓解：吊销后再注册会换新 topic |
 
-### 一处必须修正的上游文档
+### 两处必须修正的上游文档（待办，尚未执行）
 
-`04-CICD与验证边界.md` §2.4 写「Python 3.12.14（`.venv`）」——事实无误，但该 `.venv`
-位于**后端仓库** `/data/dsh/home/OriDesk/.venv`，**不在** `OriDesk-Android` 工作区
-（本工作区连 `python3` 都没有）。另外 `requirements.txt` 中**没有** `requests`/`httpx`，
-这是 §1.4「零新增依赖」的直接依据。建议并入 04 文档一并更正。
+1. `04-CICD与验证边界.md` §2.4 写「Python 3.12.14（`.venv`）」——事实无误，但该 `.venv`
+   位于**后端仓库** `/data/dsh/home/OriDesk/.venv`，**不在** `OriDesk-Android` 工作区
+   （本工作区连 `python3` 都没有）。另外 `requirements.txt` 中**没有** `requests`/`httpx`，
+   这是 §1.4「零新增依赖」的直接依据。
+2. `03-通知与推送设计.md` §5 把 ntfy token 列入 `Setting.DEFAULTS`，与 **D4** 的决议
+   （存 Fernet 密文）不一致，需按 D4 更正措辞。
 
 ---
 
