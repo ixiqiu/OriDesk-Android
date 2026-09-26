@@ -1,0 +1,103 @@
+# 打 tag 出 Release APK（04-CICD与验证边界.md §3）。
+#
+# 与 android.yml 分开是刻意的：那边带 `paths: android/**` 过滤（避免改文档也跑 Gradle），
+# 而 `paths` 与 `tags` 同在一个 push 触发器里的交互语义文档没有直白说明。
+# 拆开之后，本文件的触发条件只有一条——「推了 v* tag」，无歧义。
+name: Android Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "版本号（形如 v1.2.3），仅用于 APK 的 versionName"
+        required: false
+        default: "v0.0.0"
+
+# 创建 Release 需要写权限。默认的 GITHUB_TOKEN 权限在新仓库里往往是只读的，
+# 这里显式声明，避免"构建成功但发布失败"。
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: 配置 Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: 还原签名密钥
+        id: keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          if [ -z "${KEYSTORE_BASE64}" ]; then
+            echo "::warning title=未配置签名密钥::KEYSTORE_BASE64 为空，本次 Release APK 使用 debug 签名，无法覆盖升级。"
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          printf '%s' "${KEYSTORE_BASE64}" | base64 --decode > "${RUNNER_TEMP}/oridesk-release.jks"
+          echo "ORIDESK_KEYSTORE_PATH=${RUNNER_TEMP}/oridesk-release.jks" >> "$GITHUB_ENV"
+          echo "ORIDESK_KEYSTORE_PASSWORD=${KEYSTORE_PASSWORD}" >> "$GITHUB_ENV"
+          echo "ORIDESK_KEY_ALIAS=${KEY_ALIAS}" >> "$GITHUB_ENV"
+          echo "ORIDESK_KEY_PASSWORD=${KEY_PASSWORD}" >> "$GITHUB_ENV"
+          echo "signed=true" >> "$GITHUB_OUTPUT"
+
+      # 从 tag 推出 Android 的 versionCode / versionName。
+      # versionCode 必须是**单调递增的整数**，否则新 APK 装不上旧版本之上。
+      # 这里用 semver 三段映射：v1.2.3 -> 10203。
+      - name: 计算版本号
+        id: version
+        run: |
+          RAW="${{ github.event.inputs.version || github.ref_name }}"
+          VERSION="${RAW#v}"
+          IFS='.' read -r MAJOR MINOR PATCH <<< "${VERSION}"
+          MAJOR=${MAJOR:-0}; MINOR=${MINOR:-0}; PATCH=${PATCH:-0}
+          CODE=$(( MAJOR * 10000 + MINOR * 100 + PATCH ))
+          echo "name=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "code=${CODE}" >> "$GITHUB_OUTPUT"
+          echo "APK 版本：${VERSION}（versionCode=${CODE}）"
+
+      - name: 编译 Release APK
+        working-directory: android
+        run: |
+          ./gradlew --no-daemon --stacktrace assembleRelease \
+            -Poridesk.versionName="${{ steps.version.outputs.name }}" \
+            -Poridesk.versionCode="${{ steps.version.outputs.code }}"
+
+      - name: 重命名 APK（便于用户辨认）
+        run: |
+          mkdir -p out
+          cp android/app/build/outputs/apk/release/*.apk \
+             "out/oridesk-${{ steps.version.outputs.name }}.apk"
+          ls -l out
+
+      - name: 发布到 GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: out/*.apk
+          generate_release_notes: true
+          # 仓库公开 ⇒ Release 里的 APK 谁都能下。这是可接受的：
+          # APK 内**不含**任何服务器地址或密钥（决策 10：地址运行时填）。
+          body: |
+            ## 安装说明
+
+            1. 下载下方 APK 并安装（首次需允许"安装未知来源应用"）。
+            2. 首次启动后进入**设置**，填写服务器地址（必须 `https://`）。
+            3. 点「打开登录页」登录，然后打开「启用推送」。
+
+            签名状态：${{ steps.keystore.outputs.signed == 'true' && '固定 release keystore（可覆盖升级）' || '⚠️ debug 签名（升级前必须先卸载，本地数据会丢）' }}

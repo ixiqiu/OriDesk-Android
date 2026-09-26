@@ -13,6 +13,9 @@ android/app/build/
 android/local.properties
 android/.idea/
 android/captures/
+# Kotlin 2.0 会在模块下生成 .kotlin/（会话与增量编译缓存），不入库
+android/.kotlin/
+.kotlin/
 *.iml
 *.apk
 *.aab

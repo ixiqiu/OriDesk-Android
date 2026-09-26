@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      父主题用 AppCompat 而不是 Material，是为了避免多引一个
+      com.google.android.material 依赖（见 app/build.gradle.kts 的依赖说明）。
+      本应用只有两个朴素界面，AppCompat 的控件够用。
+    -->
+    <style name="Theme.OriDesk" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/brand</item>
+        <item name="colorPrimaryDark">@color/brand_dark</item>
+        <item name="colorAccent">@color/brand</item>
+        <item name="android:windowBackground">?android:attr/colorBackground</item>
+    </style>
+</resources>

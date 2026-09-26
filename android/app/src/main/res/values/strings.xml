@@ -1,0 +1,45 @@
+<resources>
+    <string name="app_name">OriDesk</string>
+    <string name="settings_title">设置</string>
+
+    <!-- 首次启动引导 -->
+    <string name="setup_hint">请先填写服务器地址（必须是 https://）</string>
+    <string name="server_label">服务器地址</string>
+    <string name="server_hint">https://desk.example.com</string>
+    <string name="save">保存</string>
+    <string name="login">打开登录页</string>
+
+    <!-- 推送相关 -->
+    <string name="push_section">推送</string>
+    <string name="device_label">设备名称</string>
+    <string name="device_label_hint">例如：Pixel 7 · 小邱</string>
+    <string name="enable_push">启用推送</string>
+    <string name="test_push">发送测试推送</string>
+    <string name="test_push_ok">测试推送已发出。没收到的话请检查通知权限与 ntfy 服务地址。</string>
+    <string name="test_push_fail">测试推送失败：%1$s</string>
+    <string name="push_disabled">推送未启用</string>
+
+    <!--
+      ntfy 访问令牌：方案 B 下 App 要**自己**去 ntfy 订阅，如果实例开了鉴权，
+      就必须有一个订阅方可用的令牌。服务端 API 刻意不返回它（契约 §3.2：
+      那是实例级发布凭据，不下发给客户端），所以在这里由用户填一次。
+    -->
+    <string name="ntfy_token_label">ntfy 访问令牌（可选）</string>
+    <string name="ntfy_token_hint">tk_…（实例开启鉴权时必填）</string>
+    <string name="ntfy_token_help">仅当自建 ntfy 开启了鉴权时需要。请用 ntfy 的「订阅用」令牌，不要用后端发布用的那把。留空表示实例不鉴权。</string>
+    <string name="push_needs_login">请先在应用内登录，再启用推送</string>
+    <string name="push_registered">已注册：%1$s</string>
+    <string name="push_register_failed">注册推送失败：%1$s</string>
+
+    <string name="battery_hint">国产系统会杀后台，请把本应用加入电池优化白名单，否则通知会延迟或收不到。</string>
+    <string name="battery_button">去设置电池白名单</string>
+
+    <string name="notif_channel_name">工单通知</string>
+    <string name="notif_channel_desc">新工单、客户来信、被提及</string>
+    <string name="notif_service_title">OriDesk 推送已连接</string>
+    <string name="notif_service_text">正在接收工单通知</string>
+
+    <string name="err_need_https">服务器地址必须以 https:// 开头</string>
+    <string name="err_bad_url">服务器地址格式不正确</string>
+    <string name="err_need_login">请先在应用内登录</string>
+</resources>

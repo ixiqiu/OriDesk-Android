@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  自适应图标（API 26+，与 minSdk 26 一致，因此不需要其他密度的位图版本）。
+  用矢量而不是 PNG：仓库里不放二进制资源，任何人改图标都只是一次文本 diff。
+-->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@color/ic_launcher_background" />
+    <foreground android:drawable="@drawable/ic_launcher_foreground" />
+</adaptive-icon>

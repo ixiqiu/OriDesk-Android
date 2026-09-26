@@ -1,0 +1,111 @@
+# 安卓构建验证（04-CICD与验证边界.md §3）。
+#
+# 为什么 paths 过滤是必要的：本机没有 Android 工具链，编译只能靠云端；
+# 但反过来，每次改后端文档都白跑一遍 Gradle 是纯浪费。
+#
+# 为什么"打 tag 出 Release"不放在这个文件里，而是单独一个 android-release.yml：
+# 同一个 push 触发器里 `paths` 与 `tags` 同时存在时，路径过滤对 tag 推送是否生效
+# 在文档里没有直白说明。赌错的后果是"打了 tag 却不发 Release"这种静默失效。
+# 拆成两个 workflow 后，两边的触发条件都无歧义。
+name: Android
+
+on:
+  push:
+    branches: ["**"]
+    paths:
+      - "android/**"
+      - ".github/workflows/android.yml"
+  pull_request:
+    paths:
+      - "android/**"
+      - ".github/workflows/android.yml"
+  workflow_dispatch:
+
+# 同一分支连续推送时取消上一轮，省 Actions 额度
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # GitHub 托管 runner 自带 Android SDK（ANDROID_HOME 已设，含 build-tools 34–37
+      # 与 platforms android-34~37，见 04-CICD与验证边界.md §2.1），
+      # 因此这里**不需要**任何 SDK 安装步骤。
+      - name: 安装 JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      # 负责 Gradle 缓存：首次构建慢，之后靠缓存。
+      - name: 配置 Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      # 固定 release keystore（决策 8）从 4 个 secret 还原。
+      # 没有 secret 时不失败，而是退回 debug 签名 —— 这样"还没配密钥"不会
+      # 阻塞编译验证；但会打一条醒目的警告，因为 debug 签名的 APK 每次构建
+      # 签名都不同，**无法覆盖升级**（每次都得卸载重装，本地数据与订阅全丢）。
+      - name: 还原签名密钥
+        id: keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          if [ -z "${KEYSTORE_BASE64}" ]; then
+            echo "::warning title=未配置签名密钥::KEYSTORE_BASE64 为空，本次产出 debug 签名 APK，无法覆盖升级。请在仓库 Settings → Secrets 里配置 KEYSTORE_BASE64 / KEYSTORE_PASSWORD / KEY_ALIAS / KEY_PASSWORD。"
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # 只写文件，绝不 echo 内容 —— 这是长期签名密钥，泄漏等于别人可以
+          # 签出能覆盖安装到你手机上的"升级包"。
+          printf '%s' "${KEYSTORE_BASE64}" | base64 --decode > "${RUNNER_TEMP}/oridesk-release.jks"
+          echo "ORIDESK_KEYSTORE_PATH=${RUNNER_TEMP}/oridesk-release.jks" >> "$GITHUB_ENV"
+          echo "ORIDESK_KEYSTORE_PASSWORD=${KEYSTORE_PASSWORD}" >> "$GITHUB_ENV"
+          echo "ORIDESK_KEY_ALIAS=${KEY_ALIAS}" >> "$GITHUB_ENV"
+          echo "ORIDESK_KEY_PASSWORD=${KEY_PASSWORD}" >> "$GITHUB_ENV"
+          echo "signed=true" >> "$GITHUB_OUTPUT"
+
+      - name: 编译 Debug APK
+        working-directory: android
+        run: ./gradlew --no-daemon --stacktrace assembleDebug
+
+      - name: 编译 Release APK
+        working-directory: android
+        run: ./gradlew --no-daemon --stacktrace assembleRelease
+
+      - name: 上传 APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: oridesk-apk
+          path: |
+            android/app/build/outputs/apk/debug/*.apk
+            android/app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      # 签名状态直接写进 job 摘要：这样"我拿到的这个 APK 能不能覆盖升级"
+      # 一眼可见，不必去猜工作流里发生了什么。
+      - name: 记录签名状态
+        run: |
+          {
+            echo "## 构建结果"
+            echo ""
+            if [ "${{ steps.keystore.outputs.signed }}" = "true" ]; then
+              echo "- ✅ **Release APK 已用固定 keystore 签名**，可覆盖升级。"
+            else
+              echo "- ⚠️ **未配置签名密钥**，Release APK 退回了 debug 签名。"
+              echo "  这种 APK **每次构建签名都不同**，装新版本前必须先卸载旧版本，"
+              echo "  本地数据与 ntfy 订阅都会丢失。正式分发前请配置 4 个 secret。"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

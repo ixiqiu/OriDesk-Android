@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!-- Android 13+ 通知需要运行时授权。没这个权限，推送收到了也弹不出来。 -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <!--
+      specialUse 而不是 dataSync，这是刻意的：
+      Android 15（targetSdk 35）对 dataSync 类型的前台服务施加了
+      「每 24 小时累计 6 小时」的上限，到点系统会调用 Service.onTimeout()，
+      应用必须自行停止服务。对一个要 7×24 维持 ntfy 长连接的应用来说，
+      这等于每天有一段时间必然静默失联，而且故障现象是"过一阵就收不到推送了"，
+      极难排查。specialUse 不设时限。
+      本应用是直发 APK、不上架，所以 specialUse 不需要向应用商店说明用途。
+    -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- 引导用户把本应用加入电池优化白名单（国产 ROM 杀后台是方案 B 的已知不可控项） -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
+    <application
+        android:name=".App"
+        android:allowBackup="false"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.OriDesk"
+        android:usesCleartextTraffic="false">
+        <!--
+          usesCleartextTraffic=false 强制 HTTPS（契约 §7.3）。
+          这不只是"建议"：生产配置里 SESSION_COOKIE_SECURE=True，
+          明文 HTTP 下会话 cookie 根本不会下发，App 会表现为"永远登录不上"。
+          代码里还会再次校验用户填的地址必须是 https://（UrlRules.kt）。
+        -->
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:configChanges="orientation|screenSize|keyboardHidden">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!--
+              深链 oridesk://ticket/{id}（决策 D3）。
+              为什么用自定义 scheme 而不是 https App Link：App Link 需要在清单里
+              写死 host，而服务器地址是运行时填的（决策 10），编译期不可能知道。
+              scheme 是静态的，任何服务器地址下都可用。
+            -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="oridesk" android:host="ticket" />
+            </intent-filter>
+        </activity>
+
+        <activity
+            android:name=".SettingsActivity"
+            android:exported="false"
+            android:label="@string/settings_title"
+            android:parentActivityName=".MainActivity" />
+
+        <service
+            android:name=".NtfyService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="persistent_push_notification_connection" />
+        </service>
+
+        <receiver
+            android:name=".BootReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <!-- 应用被覆盖安装后也要把订阅服务拉起来 -->
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+    </application>
+
+</manifest>
