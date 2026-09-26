@@ -20,6 +20,11 @@ on:
       - "android/**"
       - ".github/workflows/android.yml"
   workflow_dispatch:
+    inputs:
+      selftest_signing:
+        description: "签名自检：用一次性测试 keystore 验证签名流水线（不读 secret，产物不是正式包）"
+        type: boolean
+        default: false
 
 # 同一分支连续推送时取消上一轮，省 Actions 额度
 concurrency:
@@ -59,6 +64,13 @@ jobs:
       # 没有 secret 时不失败，而是退回 debug 签名 —— 这样"还没配密钥"不会
       # 阻塞编译验证；但会打一条醒目的警告，因为 debug 签名的 APK 每次构建
       # 签名都不同，**无法覆盖升级**（每次都得卸载重装，本地数据与订阅全丢）。
+      #
+      # `selftest_signing` 是给"签名流水线本身是不是通的"用的：在没有配置 secret
+      # 的情况下，用 runner 上现生成的一次性 keystore 走完全相同的路径
+      # （还原 → keytool 校验 → gradle 用 ORIDESK_KEYSTORE_PATH 签名）。
+      # 这样能把「签名配置写错了」与「secret 还没配」两类问题分开 —— 
+      # 与 E6 测试推送端点把「推送不通」和「App 有问题」分开是同一个思路。
+      # 它**不产出正式包**：测试 keystore 是临时的、口令是公开的。
       - name: 还原签名密钥
         id: keystore
         env:
@@ -67,6 +79,23 @@ jobs:
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
+          if [ -z "${KEYSTORE_BASE64}" ] && [ "${{ inputs.selftest_signing }}" = "true" ]; then
+            echo "::notice title=签名自检::未配置 secret，改用一次性测试 keystore 验证签名流水线。产物仅供验证，不是正式发布包。"
+            keytool -genkeypair \
+              -keystore "${RUNNER_TEMP}/oridesk-release.p12" \
+              -storetype PKCS12 \
+              -alias oridesk \
+              -keyalg RSA -keysize 2048 -validity 30 \
+              -storepass selftest -keypass selftest \
+              -dname "CN=OriDesk Signing Selftest, O=OriDesk"
+            echo "ORIDESK_KEYSTORE_PATH=${RUNNER_TEMP}/oridesk-release.p12" >> "$GITHUB_ENV"
+            echo "ORIDESK_KEYSTORE_PASSWORD=selftest" >> "$GITHUB_ENV"
+            echo "ORIDESK_KEY_ALIAS=oridesk" >> "$GITHUB_ENV"
+            echo "ORIDESK_KEY_PASSWORD=selftest" >> "$GITHUB_ENV"
+            echo "signed=true" >> "$GITHUB_OUTPUT"
+            echo "selftest=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           if [ -z "${KEYSTORE_BASE64}" ]; then
             echo "::warning title=未配置签名密钥::KEYSTORE_BASE64 为空，本次产出 debug 签名 APK，无法覆盖升级。请在仓库 Settings → Secrets 里配置 KEYSTORE_BASE64 / KEYSTORE_PASSWORD / KEY_ALIAS / KEY_PASSWORD。"
             echo "signed=false" >> "$GITHUB_OUTPUT"
@@ -104,6 +133,21 @@ jobs:
         working-directory: android
         run: ./gradlew --no-daemon --stacktrace assembleRelease
 
+      # 「构建成功」不等于「签名成功」：gradle 不会因为签名配置没生效而失败，
+      # 它会安静地产出一个未签名（或 debug 签名）的 release 包。
+      # 所以这里用 apksigner 检查**产物本身**的签名方案与证书指纹。
+      - name: 验证 Release APK 的签名
+        if: steps.keystore.outputs.signed == 'true'
+        run: |
+          APK=$(ls android/app/build/outputs/apk/release/*.apk | head -1)
+          echo "检查 $APK"
+          # apksigner 在 runner 自带的 SDK 里；它以退出码表达校验结果。
+          "${ANDROID_HOME}/build-tools/35.0.0/apksigner" verify --verbose --print-certs "$APK" \
+            | tee /tmp/apksigner.txt
+          if [ "${{ steps.keystore.outputs.selftest }}" = "true" ]; then
+            echo "::notice::这是签名**自检**产物（一次性测试 keystore），不要用于分发。"
+          fi
+
       - name: 上传 APK
         uses: actions/upload-artifact@v4
         with:
@@ -121,8 +165,11 @@ jobs:
           {
             echo "## 构建结果"
             echo ""
-            if [ "${{ steps.keystore.outputs.signed }}" = "true" ]; then
+            if [ "${{ steps.keystore.outputs.signed }}" = "true" ] && [ "${{ steps.keystore.outputs.selftest }}" != "true" ]; then
               echo "- ✅ **Release APK 已用固定 keystore 签名**，可覆盖升级。"
+            elif [ "${{ steps.keystore.outputs.selftest }}" = "true" ]; then
+              echo "- 🧪 **签名自检构建**：用一次性测试 keystore 验证了签名流水线是通的。"
+              echo "  **此产物不可分发**（证书是临时的）。配置 4 个 secret 后重新构建即可出正式包。"
             else
               echo "- ⚠️ **未配置签名密钥**，Release APK 退回了 debug 签名。"
               echo "  这种 APK **每次构建签名都不同**，装新版本前必须先卸载旧版本，"

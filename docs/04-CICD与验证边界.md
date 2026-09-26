@@ -33,40 +33,62 @@
 可下载（43,504 字节），校验为合法 jar（33 条目，含 `GradleWrapperMain`）。
 → 工程可自包含 `./gradlew`，不依赖 runner 预装 Gradle。
 
-### 2.3 匿名 API 能读到什么
+### 2.3 Actions API：匿名 vs 带 token
 
-| 端点 | 匿名可读 |
-|---|---|
-| `/repos/{o}/{r}/actions/runs` | ✅ 200 |
-| `/repos/{o}/{r}/actions/runs/{id}/jobs` | ✅ 200 |
-| `/repos/{o}/{r}/commits/{ref}/check-runs` | ✅ 200 |
-| `/repos/{o}/{r}/actions/runs/{id}/logs` | ❌ **403** |
+| 端点 | 匿名 | 带 token |
+|---|---|---|
+| `/repos/{o}/{r}/actions/runs` | ✅ 200 | ✅ 200 |
+| `/repos/{o}/{r}/actions/runs/{id}/jobs` | ✅ 200 | ✅ 200 |
+| `/repos/{o}/{r}/commits/{ref}/check-runs` | ✅ 200 | ✅ 200 |
+| `/repos/{o}/{r}/actions/runs/{id}/logs` | ❌ **403** | ✅ **200** |
 
-→ 匿名只能看**成功/失败**，**看不到日志**。这直接决定迭代方式（见 §5）。
+→ **2026-09-26 实测更正**：匿名看不到日志，但**带 token 可以下载**（实测拿到 22KB 的
+日志 zip）。原结论"看不到日志，这直接决定迭代方式"只在匿名前提下成立。
+
+这条差异很关键：它意味着**编译失败时能直接读日志定位**，不必靠"猜 + 再推一次"。
+阶段 3 的第一轮失败（XML 注释里出现 `--`）就是靠下载日志一眼定位的。
+因此"最小权限 token"不只是为了 push，也是为了**可诊断性**。
+
+（另注：`secrets` 相关的端点即使有 admin 权限也可能 403 —— 本会话用的 token
+就没有 `secrets:write`，因此 4 个 keystore secret 只能由人工配置。）
 
 ### 2.4 本机环境
 
 | 项 | 状态 |
 |---|---|
-| Python | 3.12.14（`.venv`） |
-| pip | **缺失**（`python -m ensurepip` 可用，版本 25.0.1） |
+| Python | 3.12.14，位于**后端仓库** `/data/dsh/home/OriDesk/.venv`（**不在**本工作区） |
+| pip | 后端 venv 内可用 |
 | 网络 | pypi 200 / github.com 200 / api.github.com 200 |
-| Android 工具链 | **全缺** |
-| git 凭据 | 无 credential helper、无 `~/.git-credentials`，**无法 push**（需 token） |
-| 仓库可见性 | `ixiqiu/OriDesk` 是 **public**，分支 `master`，工作树干净 |
+| Android 工具链 | **全缺**（java / gradle / sdkmanager / adb / kotlinc 均无） |
+| git 凭据 | 无 credential helper；push 需显式带 token |
+| 仓库可见性 | `ixiqiu/OriDesk` 是 **public**，分支 `master` |
+
+**2026-09-26 补充：本机不要跑 Android 构建。** 尝试用本地 JDK + 手工拼装的 SDK
+跑 `./gradlew assembleRelease` 时把主机拖死（Gradle 首次构建要下 Gradle 发行版 +
+AGP 依赖并编译，内存与 CPU 峰值远超本机容量）。
+**Android 编译一律走 GitHub Actions。**
+保留了 JDK 与 build-tools 仅用于**单次低开销**的签名/校验
+（`keytool` / `jarsigner` / `apksigner` / `aapt2`），不用于构建。
 
 ## 3. Workflow 设计
 
-| Workflow | 触发 | 产出 |
-|---|---|---|
-| `ci.yml`（现有，不动） | 所有 push + PR | pytest（unit SQLite + mariadb 两道作业） |
-| `android.yml`（新增） | `paths: android/**` + `workflow_dispatch` | `assembleDebug` → APK artifact；打 tag → GitHub Release 附带 APK |
-| `docker-publish.yml`（新增） | 打 tag | 镜像推 `ghcr.io` |
+| Workflow | 仓库 | 触发 | 产出 |
+|---|---|---|---|
+| `ci.yml`（原有，未动） | OriDesk | 所有 push + PR | pytest（unit SQLite + mariadb 两道作业） |
+| `android.yml`（新增） | OriDesk-Android | `paths: android/**` + `workflow_dispatch` | Debug/Release APK artifact；`selftest_signing` 可验证签名流水线 |
+| `android-release.yml`（新增） | OriDesk-Android | `v*` tag + `workflow_dispatch` | 签名 Release APK → GitHub Release |
+| `docker-publish.yml`（新增） | OriDesk | `v*` tag + `workflow_dispatch` | 镜像推 `ghcr.io` |
 
 要点：
 - **`paths` 过滤是必要的**，否则每次改后端都白跑一遍 Gradle
 - Gradle 依赖需联网下载，首次慢，之后靠缓存
 - Release APK 公开可下载——因为仓库公开。APK 内不含密钥（服务器地址运行时填），可接受
+- **`android.yml` 与 `android-release.yml` 拆成两个文件**（原计划是一个）：
+  `paths` 与 `tags` 同处一个 push 触发器时的交互语义在官方文档里没有直白说明，
+  赌错的后果是"打了 tag 却不发 Release"这种静默失效。拆开后两边触发条件都无歧义。
+- `docker-publish.yml` 里有一处容易误判的坑：**ghcr.io 镜像路径必须全小写**，
+  而仓库名 `ixiqiu/OriDesk` 含大写。用 `${GITHUB_REPOSITORY,,}` 转换，
+  否则报 "invalid reference format"（很像权限问题，会误导排查方向）。
 
 ## 4. 签名方案（已确认）
 
@@ -81,13 +103,25 @@
 
 > 公开仓库下 Secrets 是安全的：fork 的 PR 拿不到 secrets；只有仓库内分支与手动触发的运行能用。
 
+**keystore 已生成**（2026-09-26）：`env/oridesk-release.p12`（PKCS12，RSA 2048，
+有效期 30 年），口令与别名在 `env/oridesk-release-info.txt`（两者都在 `.gitignore` 内）。
+它已通过三重验证：JDK 17 `keytool` 可读、`jarsigner` 可签可验、`apksigner`
+可签出 v1=off/v2=on/v3=on 的 APK（证书 SHA-256 `9422b809…8b1bbe`）。
+
+> 剩余的人工动作只有一步：把 4 个值配进仓库 Secrets。Actions secrets API 需要
+> `secrets:write`，本会话的 token 没有该权限（403），因此**无法代配**。
+> 在配置完成前，CI 会退回 debug 签名；`selftest_signing` 可先验证签名流水线本身是通的。
+
 ## 5. 迭代方式（依赖 §2.3 的发现）
 
 | 方式 | 迭代体验 |
 |---|---|
-| **最小权限 token**（仅本仓库，`contents:write` + `actions:read`） | 能 push、能下载日志、能自己改到编译通过。**最快** |
-| 用户 push，失败后把日志贴回来 | 可行，但每轮都要用户参与；Android 首次构建通常要来回几轮 |
-| workflow 失败时用内置 `GITHUB_TOKEN` 把 Gradle 错误尾巴发成 commit comment（公开可匿名读） | 不用额外 token，但仓库里会出现临时评论，修好后需删除 |
+| **最小权限 token**（本仓库，`contents:write` + `actions:read`） | 能 push、**能下载日志**、能自己改到编译通过。**最快**，阶段 3 实际用的就是这条 |
+| 用户 push，失败后把日志贴回来 | 可行，但每轮都要用户参与 |
+| workflow 失败时用内置 `GITHUB_TOKEN` 把 Gradle 错误尾巴发成 commit comment | 不用额外 token，但仓库里会出现临时评论，修好后需删除。**阶段 3 未用到**（token 能读日志） |
+
+阶段 3 实测迭代轮次：**3 轮**（首轮 XML 注释非法 → 二轮通过 → 后续为版本号/文档）。
+靠"下载日志 + 本机资源预检脚本"把轮次压了下来，而不是靠盲推。
 
 ## 6. 验证边界（必须如实告知用户）
 
@@ -95,22 +129,27 @@
 
 - 后端：`pytest` 全绿、`manage.py check`、`check --deploy`、`makemigrations --check --dry-run`
 - 后端：通知受众解析、聚合、@解析（含邮箱 `@` 陷阱）、ntfy 请求构造（打桩）
+- 后端：设置页确实渲染出推送配置输入框（**"能配置"与"不能配置"的分界**）
 - Android：**云端编译通过、产出 APK**（经 GitHub Actions）
+- Android：APK 的清单内容与签名——`aapt2 dump badging/xmltree` 核对包名、版本、
+  权限、深链、前台服务类型；`apksigner verify` 核对签名方案与证书指纹
+- keystore 本身可用（`keytool` / `jarsigner` / `apksigner` 三重）
 - 文档正确性
 
 ### ❌ 我无法验证
 
-- APK **真机运行**（无设备、无 adb）
+- APK **真机运行**（无设备、无 adb）——**真机由用户代验**，阶段 3 已确认"能登录"
 - **ntfy 实际推送到达**（需真实服务端与手机）
 - 国产 ROM 后台存活行为
 - 通知点击深链的实际跳转
 - 升级覆盖安装
+- **本机不能跑 Android 构建**（会拖死主机，见 §2.4）——构建验证只能走云端
 
 ## 7. 风险清单
 
 | # | 风险 | 缓解 |
 |---|---|---|
-| 1 | APK 无法本机编译，安卓部分必然要来回几轮 | 云端 CI 编译验证 + 依赖最少化 |
+| 1 | APK 无法本机编译，安卓部分必然要来回几轮 | 云端 CI 编译验证 + 依赖最少化（只 2 个第三方依赖）+ 本机资源预检脚本 |
 | 2 | 国产 ROM 杀后台导致推送延迟 | 引导用户加白名单；文档写明；无法根除 |
 | 3 | 公开仓库泄露内部信息 | 服务器地址运行时填写；密钥绝不入库；ntfy topic 随机化 |
 | 4 | 新增模型导致 `makemigrations --check` 红 | 提交迁移文件；CI 把关 |
