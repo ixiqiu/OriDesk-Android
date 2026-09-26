@@ -96,10 +96,28 @@ jobs:
             echo "selftest=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          if [ -z "${KEYSTORE_BASE64}" ]; then
-            echo "::warning title=未配置签名密钥::KEYSTORE_BASE64 为空，本次产出 debug 签名 APK，无法覆盖升级。请在仓库 Settings → Secrets 里配置 KEYSTORE_BASE64 / KEYSTORE_PASSWORD / KEY_ALIAS / KEY_PASSWORD。"
-            echo "signed=false" >> "$GITHUB_OUTPUT"
-            exit 0
+
+          # 逐个检查，而不是只看 KEYSTORE_BASE64。
+          # 只配了一半（例如给了 base64 却忘了口令或别名）是最容易犯的错：
+          # 旧逻辑会带着空口令继续跑，最后产出一个"看起来正常"的包 ——
+          # 要么签名直接失败但报错指向 gradle 深处，要么更糟：安静地退回 debug 签名。
+          # 所以「全没配」是"还没配"，可以温和降级；「配了一半」是配置错误，必须响亮失败。
+          # 注意用 if 而不是 `[ ... ] && x=...`：后者在条件为假时返回非 0，
+          # 而 Actions 的 shell 带 -e，会让整步直接退出。
+          missing=""
+          if [ -z "${KEYSTORE_BASE64}" ]; then missing="${missing} KEYSTORE_BASE64"; fi
+          if [ -z "${KEYSTORE_PASSWORD}" ]; then missing="${missing} KEYSTORE_PASSWORD"; fi
+          if [ -z "${KEY_ALIAS}" ]; then missing="${missing} KEY_ALIAS"; fi
+          if [ -z "${KEY_PASSWORD}" ]; then missing="${missing} KEY_PASSWORD"; fi
+
+          if [ -n "${missing}" ]; then
+            if [ "${missing}" = " KEYSTORE_BASE64 KEYSTORE_PASSWORD KEY_ALIAS KEY_PASSWORD" ]; then
+              echo "::warning title=未配置签名密钥::KEYSTORE_BASE64 为空，本次产出 debug 签名 APK，无法覆盖升级。请在仓库 Settings → Secrets 里配置 KEYSTORE_BASE64 / KEYSTORE_PASSWORD / KEY_ALIAS / KEY_PASSWORD。"
+              echo "signed=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "::error title=签名密钥配置不完整::缺少:${missing}。这 4 个 secret 必须**一起**配置，只配一部分会让签名静默失效。"
+            exit 1
           fi
           # 只写文件，绝不 echo 内容 —— 这是长期签名密钥，泄漏等于别人可以
           # 签出能覆盖安装到你手机上的"升级包"。
@@ -114,16 +132,16 @@ jobs:
       # 只输出别名与证书指纹（都是公开信息），**绝不输出密钥或口令** ——
       # 这是长期签名密钥，泄漏等于别人可以签出能覆盖安装到用户手机上的"升级包"。
       # 这一步把"keystore 格式或口令不对"从"打包到最后一刻才炸"提前到构建最开始。
+      #
+      # 口令与别名取自 `ORIDESK_*`（上一步已导出到环境），**不读 secrets** ——
+      # 之前读 secrets 导致自检模式（secret 为空、口令是 selftest）这一步必然失败。
       - name: 校验签名密钥
         if: steps.keystore.outputs.signed == 'true'
-        env:
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
         run: |
           keytool -list -keystore "${ORIDESK_KEYSTORE_PATH}" \
             -storetype PKCS12 \
-            -storepass "${KEYSTORE_PASSWORD}" \
-            -alias "${KEY_ALIAS}"
+            -storepass "${ORIDESK_KEYSTORE_PASSWORD}" \
+            -alias "${ORIDESK_KEY_ALIAS}"
 
       - name: 编译 Debug APK
         working-directory: android

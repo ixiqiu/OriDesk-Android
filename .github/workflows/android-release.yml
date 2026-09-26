@@ -45,10 +45,25 @@ jobs:
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
-          if [ -z "${KEYSTORE_BASE64}" ]; then
-            echo "::warning title=未配置签名密钥::KEYSTORE_BASE64 为空，本次 Release APK 使用 debug 签名，无法覆盖升级。"
-            echo "signed=false" >> "$GITHUB_OUTPUT"
-            exit 0
+          # 逐个检查而不是只看 KEYSTORE_BASE64：只配一半是最容易犯的错，
+          # 旧逻辑会带着空口令继续跑，最后产出一个"看起来正常"的包。
+          # 用 if 而不是 `[ ... ] && x=...`：后者条件为假时返回非 0，
+          # 而 Actions 的 shell 带 -e，会让整步直接退出。
+          missing=""
+          if [ -z "${KEYSTORE_BASE64}" ]; then missing="${missing} KEYSTORE_BASE64"; fi
+          if [ -z "${KEYSTORE_PASSWORD}" ]; then missing="${missing} KEYSTORE_PASSWORD"; fi
+          if [ -z "${KEY_ALIAS}" ]; then missing="${missing} KEY_ALIAS"; fi
+          if [ -z "${KEY_PASSWORD}" ]; then missing="${missing} KEY_PASSWORD"; fi
+
+          if [ -n "${missing}" ]; then
+            if [ "${missing}" = " KEYSTORE_BASE64 KEYSTORE_PASSWORD KEY_ALIAS KEY_PASSWORD" ]; then
+              echo "::warning title=未配置签名密钥::4 个 secret 全为空，本次 Release APK 使用 debug 签名，**无法覆盖升级**。"
+              echo "signed=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            # 配了一半：发布会产出一个签名不对的包，比构建失败更糟。响亮失败。
+            echo "::error title=签名密钥配置不完整::缺少:${missing}。发布包必须用固定 keystore 签名，这 4 个 secret 必须**一起**配置。"
+            exit 1
           fi
           printf '%s' "${KEYSTORE_BASE64}" | base64 --decode > "${RUNNER_TEMP}/oridesk-release.p12"
           echo "ORIDESK_KEYSTORE_PATH=${RUNNER_TEMP}/oridesk-release.p12" >> "$GITHUB_ENV"
@@ -58,16 +73,15 @@ jobs:
           echo "signed=true" >> "$GITHUB_OUTPUT"
 
       # 见 android.yml 里的同名步骤：只输出别名与指纹，绝不输出密钥。
+      # 口令与别名取自 `ORIDESK_*`（上一步已导出到环境），不读 secrets ——
+      # 读 secrets 会让"secret 缺失/改名"这类问题在这一步以空口令的形式炸出来。
       - name: 校验签名密钥
         if: steps.keystore.outputs.signed == 'true'
-        env:
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
         run: |
           keytool -list -keystore "${ORIDESK_KEYSTORE_PATH}" \
             -storetype PKCS12 \
-            -storepass "${KEYSTORE_PASSWORD}" \
-            -alias "${KEY_ALIAS}"
+            -storepass "${ORIDESK_KEYSTORE_PASSWORD}" \
+            -alias "${ORIDESK_KEY_ALIAS}"
 
       # 从 tag 推出 Android 的 versionCode / versionName。
       # versionCode 必须是**单调递增的整数**，否则新 APK 装不上旧版本之上。
@@ -97,6 +111,14 @@ jobs:
           cp android/app/build/outputs/apk/release/*.apk \
              "out/oridesk-${{ steps.version.outputs.name }}.apk"
           ls -l out
+
+      # 发布前先验产物签名。「构建成功」不等于「签名成功」：
+      # gradle 不会因为签名配置没生效而失败。把一个签名不对的包发到 Release，
+      # 比构建失败糟糕得多 —— 用户会装上它，然后下次升级才发现装不上去。
+      - name: 验证 APK 签名（发布前把关）
+        if: steps.keystore.outputs.signed == 'true'
+        run: |
+          "${ANDROID_HOME}/build-tools/35.0.0/apksigner" verify --verbose --print-certs out/*.apk
 
       - name: 发布到 GitHub Release
         uses: softprops/action-gh-release@v2
