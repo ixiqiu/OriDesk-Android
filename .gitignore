@@ -1,0 +1,24 @@
+# 凭据一律不入库
+env/
+*.env
+.secrets/
+*.keystore
+*.jks
+*.pepk
+
+# Android
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/.idea/
+android/captures/
+*.iml
+*.apk
+*.aab
+
+# 杂项
+__pycache__/
+.DS_Store
+probe.txt
+.probe
