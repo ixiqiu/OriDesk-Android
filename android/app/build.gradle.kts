@@ -3,11 +3,16 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
-// 版本号可由 CI 传入（打 tag 时用 tag 里的版本），本地默认 1 / 1.0.0。
+// 版本号可由 CI 传入（打 tag 时用 tag 里的版本），本地默认见下。
 // 用 -Poridesk.versionCode=… 而不是环境变量：gradle 属性会在构建日志里可见，
 // 便于事后核对"这个 APK 到底是哪次构建产出的"。
-val orideskVersionCode = (findProperty("oridesk.versionCode") as String?)?.toIntOrNull() ?: 1
-val orideskVersionName = (findProperty("oridesk.versionName") as String?) ?: "1.0.0"
+//
+// 默认值刻意与 Release workflow 的 semver 映射保持**同一套编码**
+// （MAJOR*10000 + MINOR*100 + PATCH，见 android-release.yml 的「计算版本号」步骤）。
+// 否则分支构建（默认值）与 tag 构建（映射值）的 versionCode 会差几个数量级，
+// 用户先装 tag 版再装分支版会被系统当成降级而拒绝安装。
+val orideskVersionCode = (findProperty("oridesk.versionCode") as String?)?.toIntOrNull() ?: 10101
+val orideskVersionName = (findProperty("oridesk.versionName") as String?) ?: "1.0.1"
 
 // 固定 release keystore（决策 8）。
 // debug 签名每次构建都不同 —— 每次升级必须卸载重装，本地数据与 ntfy 订阅全丢。
