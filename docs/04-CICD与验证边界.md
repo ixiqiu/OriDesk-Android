@@ -108,9 +108,25 @@ AGP 依赖并编译，内存与 CPU 峰值远超本机容量）。
 它已通过三重验证：JDK 17 `keytool` 可读、`jarsigner` 可签可验、`apksigner`
 可签出 v1=off/v2=on/v3=on 的 APK（证书 SHA-256 `9422b809…8b1bbe`）。
 
+**签名流水线本身已在 CI 端到端验证**（不是在本地）：
+`android.yml` 的 `selftest_signing` 派发参数会在没有 secret 时用 runner 上现生成的
+一次性 keystore 走完完全相同的路径。实测步骤全部 success ——
+`校验签名密钥`（keytool）、`编译 Release APK`、`验证 Release APK 的签名`（apksigner
+输出 `Verifies`，v2=true，证书指纹与 keytool 一致）。
+
+> 这一步值得单独记：**签名自检第一次跑就失败了**（`校验签名密钥` 读的是
+> `secrets.KEYSTORE_PASSWORD`，而自检模式下它是空的），而这条路径在配置 secret 前
+> 一直是 `skipped`。这正是"没跑过的代码等于没有的代码"的实例 ——
+> 顺带还发现「4 个 secret 只配一半」会带着空口令继续跑、产出看起来正常的包，
+> 已改为响亮失败。
+
 > 剩余的人工动作只有一步：把 4 个值配进仓库 Secrets。Actions secrets API 需要
 > `secrets:write`，本会话的 token 没有该权限（403），因此**无法代配**。
 > 在配置完成前，CI 会退回 debug 签名；`selftest_signing` 可先验证签名流水线本身是通的。
+>
+> 若不想动 Secrets：也可以用 `env/oridesk-release.p12` + `apksigner` 手工签 CI 产物
+> （`dist/OriDesk-1.0.1.apk` 就是这么来的），签名与 CI 配好 secret 后产的包**完全一致**，
+> 升级路径不受影响。
 
 ## 5. 迭代方式（依赖 §2.3 的发现）
 

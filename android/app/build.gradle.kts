@@ -52,6 +52,20 @@ android {
                 storePassword = System.getenv("ORIDESK_KEYSTORE_PASSWORD")
                 keyAlias = System.getenv("ORIDESK_KEY_ALIAS")
                 keyPassword = System.getenv("ORIDESK_KEY_PASSWORD")
+
+                // 签名方案显式声明，不依赖 AGP/apksigner 的默认值。
+                //
+                // 起因：CI 签名自检的验签输出显示 AGP 只启用了 v2，而我手工用 apksigner
+                // 签的交付包是 v2+v3 —— 同一份代码两条路径产物不一致，将来必然有人
+                // 对着"为什么这个包和那个包不一样"浪费时间。
+                //
+                // v1（JAR 签名）关掉：minSdk 26（Android 8.0），v2 已覆盖全部目标设备；
+                // v1 只在 Android 6 及更早才需要，开它只会让 APK 变大、安装变慢。
+                // v3 打开：v2 不支持**密钥轮换**，v3 支持。证书虽然有效期 30 年，
+                // 但把轮换能力留着的成本是零。
+                enableV1Signing = false
+                enableV2Signing = true
+                enableV3Signing = true
             }
         }
     }
