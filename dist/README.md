@@ -3,54 +3,102 @@
 > APK 本身被 `.gitignore` 的 `*.apk` 排除，**不入库**；本说明入库，用来记录
 > "这个包到底是哪次构建、什么签名状态"。
 
-## 本次产物
+## 交付包：`OriDesk-1.0.1.apk`
 
-| 文件 | 大小 | SHA-256 |
-|---|---|---|
-| `OriDesk-1.0.0-release.apk` | 2.43 MB | `98422af46b0d3cbf02f9fe33a7eae2f683f0c16d3be80c82c4fed87bb9f8c3fe` |
-| `OriDesk-1.0.0-debug.apk` | 3.09 MB | `78475c0dff51f89c7295d87dab0c31f6f89c05a0b971de3a02310b11c1aa0d0c` |
+| 项 | 值 |
+|---|---|
+| 文件 | `OriDesk-1.0.1.apk` |
+| 大小 | 2.43 MB |
+| SHA-256 | `470a9f612ff199c83584bd825ba344d9cbfd6c034b3036c1c624f828d8ee871d` |
+| 包名 | `com.xinjiyuan.oridesk` |
+| 版本 | versionName `1.0.1` · versionCode `10101` |
+| minSdk / targetSdk | 26 / 35 |
+| 签名 | ✅ **固定 release keystore**（v2 + v3），证书 SHA-256 `9422b809…8b1bbe` |
 
-- 来源：GitHub Actions run `36235000672`（提交 `f4fc5d4`）
-- 应用包名：`com.xinjiyuan.oridesk` · minSdk 26 · targetSdk 35 · versionName 1.0.0
+另有 `OriDesk-1.0.1-debug.apk`（3.09 MB，debug 构建，`debuggable=true`），
+仅用于 `adb logcat` 排查；日常使用装上面那个。
 
-## ⚠️ 签名状态：**debug 签名**，不能覆盖升级
+### 这个包的签名是"正式"的
 
-当前仓库**尚未配置** 4 个 keystore secret（`KEYSTORE_BASE64` /
-`KEYSTORE_PASSWORD` / `KEY_ALIAS` / `KEY_PASSWORD`），所以 CI 退回了 debug 签名。
+它用 `env/oridesk-release.p12`（固定 keystore）签名，**与将来 CI 配好 4 个
+GitHub Secret 后产出的包签名完全一致**。含义：
 
-这不是"也能用"，它有一个具体的后果：
+- 装它之后，后续版本可以**直接覆盖升级**，不必卸载、不丢本地数据与推送订阅。
+- 之前那个 debug 签名的包（`1.0.0`）签名不同，**从它换到本包需要卸载一次**。
+  这是最后一次签名变更。
 
-> Android 的 debug keystore 是**每次 CI 运行现生成**的（GitHub 托管 runner
-> 每次都是全新虚拟机）。因此**这一次构建的 APK 和下一次构建的 APK 签名不同**，
-> 装新版本时必须先卸载旧版本 —— 卸载会清掉本地数据与 ntfy 订阅。
+`versionCode` 与 Release workflow 从 tag 推导的编码保持一致
+（`MAJOR*10000 + MINOR*100 + PATCH`），避免分支构建与 tag 构建互相"降级"。
 
-keystore 已经生成好了（`env/oridesk-release.p12`，口令见
-`env/oridesk-release-info.txt`），把它配进 4 个 secret 之后重新跑一次
-Release workflow，产出的 APK 就具备正常的覆盖升级能力（决策 8）。
+## 本版修了什么
 
-## 装之前需要知道的两件事
+**Android 15 强制 edge-to-edge 导致状态栏压住顶部按钮**（真机反馈）。
 
-1. **必须先配好服务器地址**：首次启动会显示引导条 → 进「设置」→ 填
-   `https://` 开头的地址 → 「打开登录页」登录 → 再打开「启用推送」。
-2. **推送要能工作，后端必须先部署**：本 APK 只包含客户端。
-   推送链路还需要后端跑起 `apps/notifications`（提交 `5e8dbda`）与
-   ntfy 服务（提交 `2f711a3`），并在后端「系统设置」里填 `ntfy_server_url`。
+根因不是主题写错，而是 targetSdk 35 的应用被系统强制 edge-to-edge，
+窗口延伸到状态栏底下，网页的移动顶栏因此被压住。
+修法是按窗口 insets 给根布局留边距（`UiInsets.kt`），并处理输入法 insets，
+避免键盘盖住设置页的输入框。
+
+刻意**没有**用 `windowOptOutEdgeToEdgeEnforcement` —— 那个开关只在 API 35
+有效且会被后续版本移除，用它等于把必然复发的 bug 推给未来。
+
+## 装之前需要知道的
+
+1. **首次启动**：顶部引导条 →「设置」→ 填 `https://` 开头的服务器地址 → 保存 →
+   「打开登录页」登录。
+2. **推送需要后端先部署好**（见下），且后端「系统设置」里填好 ntfy 配置，
+   否则 App 里点「启用推送」会明确提示配置缺失。
+
+## 后端部署（推送链路的另一半）
+
+后端代码已推送到 `ixiqiu/OriDesk`（`40d8f09`），包含：
+
+- `apps/notifications/`：受众解析、@提及、聚合、ntfy 发布、三处钩子
+- 端点 `E1–E6`（`/api/mobile/…`）
+- `docker-compose.yml` 新增 ntfy 服务与数据卷
+- **系统设置页新增推送配置区**（此前只加了设置项却没有 UI，管理员无处可填 ——
+  这是真机验证前不会暴露的阻塞性缺口）
+
+```bash
+cd <OriDesk 部署目录>
+git pull
+docker compose up -d --build
+
+# ntfy 默认 deny-all + 开登录，必须先建用户与令牌：
+docker compose exec ntfy ntfy user add --role=admin oridesk      # 发布方（后端用）
+docker compose exec ntfy ntfy token add --label=backend oridesk  # 记下 tk_…
+docker compose exec ntfy ntfy user add phone                     # 订阅方（手机用）
+docker compose exec ntfy ntfy access phone "oridesk-*" read-only
+docker compose exec ntfy ntfy token add --label=phone phone      # 记下 tk_…
+```
+
+然后在 OriDesk「系统设置 → 移动端推送」填：
+
+- 启用移动端推送 ✅
+- ntfy 服务地址：**手机能访问到的 https 地址**（如 `https://ntfy.你的域名`）。
+  填 `127.0.0.1` 或容器内网名会"后端发得出去、手机订阅不到"。
+  填 `http://` 会被**拒绝**（客户端强制 HTTPS）。
+- ntfy 访问令牌：后端那把（`--label=backend`）
+
+最后在 App 设置页填 `--label=phone` 那把令牌，点「发送测试推送」——
+通没通立刻就知道。
+
+> ⚠️ 反代 ntfy 时记得设 `behind-proxy: true`（compose 里已默认开启），
+> 否则所有手机共用一个限流桶，几台设备就能互相把对方限流掉。
 
 ## 已验证 / 未验证
 
-**已在本机核实**（无 Android 工具链，靠解析 APK）：
+**已在本机核实**（无 Android 工具链，靠静态解析与 aapt2）：
 
-- 编译通过，产出结构合法的 APK（含 `AndroidManifest.xml` / `classes.dex` / `resources.arsc`）
-- **v2/v3 签名块存在**（现代 AGP 默认不生成 `META-INF/CERT.RSA`，属正常）
-- 清单里该有的都在：包名、`oridesk://ticket` 深链、`POST_NOTIFICATIONS`、
-  `FOREGROUND_SERVICE_SPECIAL_USE`、`RECEIVE_BOOT_COMPLETED`、
-  四个组件（MainActivity / SettingsActivity / NtfyService / BootReceiver）
-- 资源表含通知图标与通知渠道名
+- 编译通过（CI run `36235953727` 及后续），产出结构合法的 APK
+- `aapt2 dump badging`：包名、`versionCode=10101`/`versionName=1.0.1`、
+  7 项权限（含 `FOREGROUND_SERVICE_SPECIAL_USE`、`RECEIVE_BOOT_COMPLETED`）
+- `aapt2 dump xmltree`：`usesCleartextTraffic=false`、`oridesk://ticket` 深链、
+  `foregroundServiceType=0x40000000`（SPECIAL_USE）、四个组件齐全
+- **签名**：v2 + v3 校验通过，证书指纹与 keystore 一致
+- keystore 本身：JDK 17 `keytool` 可读、`jarsigner` 可签、`apksigner` 可签可验
 
-**无法验证**（没有设备、没有 adb，`04-CICD与验证边界.md` §6 已列明）：
+**已由真机确认**：能登录（WebView 壳与 session 复用正常）。
 
-- 真机运行、界面实际表现
-- **推送实际到达**（需要真实 ntfy 实例 + 后端部署）
-- 国产 ROM 的后台存活（方案 B 的已知不可控项）
-- 通知点击深链的实际跳转
-- 覆盖升级
+**仍无法验证**：推送实际到达、国产 ROM 后台存活、通知点击跳转、
+覆盖升级、输入法 insets 的实际观感。
